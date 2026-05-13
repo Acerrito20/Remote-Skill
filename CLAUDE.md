@@ -27,10 +27,10 @@ uv venv
 uv pip install -e ".[dev]"
 
 # Run all unit tests (no Windows required)
-pytest tests/unit/
+pytest tests/unit/ -v
 
 # Run a single test file
-pytest tests/unit/test_handle_cache.py
+pytest tests/unit/test_config.py
 
 # Run integration tests (Windows only — skipped automatically on Linux/macOS)
 pytest tests/integration/
@@ -44,6 +44,9 @@ python server/main.py
 
 # Start with TCP/SSE transport (for cross-session use)
 CDG_TRANSPORT=tcp python server/main.py
+
+# Install pre-commit hooks (dev machines)
+pre-commit install
 ```
 
 ---
@@ -88,7 +91,9 @@ skills/                 — MCP @tool() functions; each module has register(mcp)
   discovery.py          — list_windows, list_processes, connect_app, get_tree, find_element, inspect_element, find_by_path
   actions.py            — invoke, set_text, get_text, select_combo_item, toggle_checkbox, set_checkbox,
                           expand/collapse_tree_node, scroll_into_view, menu_select, background_click,
-                          background_type, send_raw_message
+                          background_type, send_raw_message,
+                          virtual_drag (window-relative drag, 3-tier fallback),
+                          drag_screen (screen-absolute drag, for use after OCR)
   lifecycle.py          — start_app, kill_app, restart_app, wait_for_app, get_app_state, list_app_windows
   waits.py              — wait_for, wait_for_idle, wait_for_window, poll_until
   dialogs.py            — dismiss_dialog, register_dialog_rule, list_modal_dialogs, screenshot_window;
@@ -99,7 +104,9 @@ skills/                 — MCP @tool() functions; each module has register(mcp)
   safety.py             — assert_background_safe, get_audit_log, dry_run, get_guardrail_status, panic_stop
 
 core/
-  handle_cache.py       — HandleCache: opaque string handles → live COM wrappers; TTL 5 min
+  config.py             — CFG singleton: reads default.toml + app_overrides/*.toml; engine_for(), override_for(), cdp_url_for()
+  handle_cache.py       — HandleCache: opaque string handles → live COM wrappers; TTL from CFG; auto-purge daemon
+  middleware.py         — install_audit_middleware(): wraps every registered tool with timing + AUDIT.record()
   selector.py           — "Window[title~='Notepad'] > Edit[auto_id='15']" parser + pywinauto resolver
   retry.py              — @with_retry decorator with exponential backoff
   audit.py              — append-only JSON Lines audit log; AUDIT singleton
@@ -107,11 +114,14 @@ core/
   logging.py            — structlog JSON Lines to stderr
 
 engines/                — low-level adapters; skills/ picks the right one per app via config
-  pywinauto_adapter.py  — primary (UIA + Win32 backends)
-  win32_adapter.py      — raw user32/SendMessage/PostMessage
-  playwright_adapter.py — CDP connect for Electron apps
-  autohotkey_adapter.py — AHK v2 subprocess wrapper for legacy apps
-  flaui_adapter.py      — .NET bridge via pythonnet for WPF edge cases
+  pywinauto_adapter.py   — primary (UIA + Win32 backends)
+  win32_adapter.py       — raw user32/SendMessage/PostMessage
+  playwright_adapter.py  — CDP connect for Electron apps
+  autohotkey_adapter.py  — AHK v2 subprocess wrapper for legacy apps
+  flaui_adapter.py       — .NET bridge via pythonnet for WPF edge cases; DLLs in flaui_dlls/
+  winappdriver_adapter.py — WebDriver protocol (reuse existing Selenium infra)
+  tesseract_adapter.py   — OCR last resort: screenshot_region, ocr_hwnd, find_text_in_hwnd;
+                           uses PrintWindow (background-safe); requires Tesseract binary installed
 
 config/
   default.toml          — server, timeouts, retry, handle_cache, audit, engine, dialog_rules defaults
@@ -119,6 +129,8 @@ config/
 
 scripts/
   setup_agent_user.ps1        — create 'agent' Windows user
+  setup_openssh.ps1           — install OpenSSH server, key auth, PowerShell default shell
+  setup_winrm.ps1             — enable WinRM / PowerShell Remoting (backup channel)
   enable_rdpwrap.ps1          — install RDP Wrapper for concurrent sessions
   install_virtual_display.ps1 — virtual monitor driver (IddSampleDriver / usbmmidd / Parsec)
   install_service.ps1         — NSSM service install (must run as agent user, not LocalSystem)
@@ -145,6 +157,19 @@ drag_mouse_input  press_mouse_input  release_mouse_input  type_keys  set_focus
 - Click in client area → `PostMessage(WM_LBUTTONDOWN/UP, MAKELONG(x, y))`
 - Menu item → `win.menu_select("File", "Save As")` or `WM_COMMAND`
 - Checkbox → `elem.toggle()` / `elem.get_toggle_state()`
+- Drag gesture → `virtual_drag` / `drag_screen` (see session-isolation note below)
+
+### Session-isolation and virtual_drag
+
+`virtual_drag` and `drag_screen` use `SendInput` as a last-resort tier 3 fallback for GPU-accelerated
+apps (CapCut, DaVinci Resolve, etc.) that read raw/direct input and ignore the Win32 message queue.
+This is safe **because the MCP server runs inside the isolated `agent` RDP session**, not the user's
+console session. SendInput in the agent session moves only the agent's virtual cursor on the virtual
+display — the operator's real cursor is in a completely separate Windows session and is unaffected.
+
+Do NOT call `_sendinput_drag` from any process running in Session 0, LocalSystem, or the user's own
+interactive session. The NSSM service `ObjectName` must be `.\agent` (not `LocalSystem`) for this
+invariant to hold.
 
 ### Element handles vs COM pointers
 
@@ -154,8 +179,12 @@ A stale handle returns `{"error": "stale_handle"}` — the agent must re-discove
 
 ### Engine selection is config, not code
 
-Adding support for a new app should be a one-line change in `config/app_overrides/<app>.toml`,
-not a code change. The `engine` key routes to the correct adapter.
+Adding support for a new app is a one-line change in `config/app_overrides/<app>.toml` —
+no code change needed. `CFG.engine_for(executable)` resolves the engine at runtime.
+`connect_app` and `start_app` both call `CFG.override_for()` automatically.
+
+For Electron apps (`engine = "playwright"`), `start_app` injects
+`--remote-debugging-port=<port>` automatically and returns the CDP URL to pass to `browser_open`.
 
 ### NSSM service must run as `agent` user — not LocalSystem
 
@@ -184,8 +213,8 @@ are the single biggest source of flaky automation.
 ## Adding a new engine
 
 1. Create `engines/<name>_adapter.py` with `connect()` / `launch()` functions.
-2. Add an entry to `config/app_overrides/<app>.toml`.
-3. Update the engine dispatch logic if needed (currently handled by skills loading the adapter directly).
+2. Add an entry to `config/app_overrides/<app>.toml` with `engine = "<name>"`.
+3. Handle the new engine name in `connect_app` / `start_app` if it needs special startup logic (e.g. the CDP port injection for playwright).
 
 ---
 

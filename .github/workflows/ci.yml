@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "claude/**"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  unit-tests:
+    name: Unit tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install dependencies
+        run: uv pip install --system -e ".[dev]"
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Format check
+        run: ruff format --check .
+
+      - name: Run unit tests
+        run: pytest tests/unit/ -v --tb=short
+
+  # Integration tests require a real Windows runner with UI access.
+  # Enable this job when a self-hosted Windows runner is available.
+  # integration-tests:
+  #   name: Integration tests (Windows)
+  #   runs-on: [self-hosted, windows, ui-access]
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - name: Run integration tests
+  #       run: pytest tests/integration/ -v --tb=short
