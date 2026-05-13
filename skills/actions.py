@@ -6,9 +6,76 @@ etc.) are intercepted at the guardrail layer before they can reach the OS.
 
 from __future__ import annotations
 
+import ctypes
+import ctypes.wintypes
+import time
+
 from core.com_threading import com_thread
 from core.handle_cache import HANDLES
 from core.retry import with_retry
+
+# ── SendInput structures (safe to define on any OS; windll is only touched
+#    at call-time inside the tools, which are Windows-only code paths) ─────────
+
+class _MOUSEINPUT(ctypes.Structure):
+    _fields_ = [
+        ("dx", ctypes.c_long),
+        ("dy", ctypes.c_long),
+        ("mouseData", ctypes.c_ulong),
+        ("dwFlags", ctypes.c_ulong),
+        ("time", ctypes.c_ulong),
+        ("dwExtraInfo", ctypes.c_void_p),  # ULONG_PTR, pointer-sized
+    ]
+
+class _INPUT(ctypes.Structure):
+    _fields_ = [("type", ctypes.c_ulong), ("mi", _MOUSEINPUT)]
+
+
+def _sendinput_drag(
+    screen_start: tuple[int, int],
+    screen_end: tuple[int, int],
+    duration_ms: int,
+    steps: int,
+) -> None:
+    """Execute a drag via SendInput within the agent's isolated RDP session.
+
+    Safe because SendInput here moves the agent's virtual cursor on the virtual
+    display — it never touches the operator's real cursor in the console session.
+    Do NOT call this from a process running in Session 0 or the user's session.
+    """
+    MOVE = 0x0001
+    LDOWN = 0x0002
+    LUP = 0x0004
+    ABS = 0x8000
+    user32 = ctypes.windll.user32
+
+    sm_cx = user32.GetSystemMetrics(0)
+    sm_cy = user32.GetSystemMetrics(1)
+
+    def _to_abs(sx: int, sy: int) -> tuple[int, int]:
+        return int(sx * 65535 / sm_cx), int(sy * 65535 / sm_cy)
+
+    def _send(x: int, y: int, flags: int) -> None:
+        inp = _INPUT()
+        inp.type = 0  # INPUT_MOUSE
+        inp.mi.dx, inp.mi.dy = x, y
+        inp.mi.dwFlags = flags
+        inp.mi.mouseData = 0
+        inp.mi.time = 0
+        inp.mi.dwExtraInfo = None
+        ctypes.windll.user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(_INPUT))
+
+    ax, ay = _to_abs(*screen_start)
+    ex, ey = _to_abs(*screen_end)
+    step_delay = (duration_ms / steps) / 1000.0
+
+    _send(ax, ay, MOVE | ABS)
+    _send(ax, ay, LDOWN | ABS)
+    for i in range(1, steps + 1):
+        t = i / steps
+        _send(int(ax + (ex - ax) * t), int(ay + (ey - ay) * t), MOVE | ABS)
+        time.sleep(step_delay)
+    _send(ex, ey, LUP | ABS)
 
 
 def register(mcp) -> None:
@@ -238,5 +305,112 @@ def register(mcp) -> None:
             else:
                 result = win32gui.SendMessage(hwnd, msg, wparam, lparam)
                 return {"ok": True, "result": result}
+        except Exception as exc:
+            return {"error": str(exc), "type": type(exc).__name__}
+
+    @mcp.tool()
+    def virtual_drag(
+        window_handle: str,
+        start_x: int,
+        start_y: int,
+        end_x: int,
+        end_y: int,
+        duration_ms: int = 500,
+        steps: int = 20,
+    ) -> dict:
+        """Drag from one point to another within a window's client area.
+
+        Tries three strategies in order:
+        1. UIA DragPattern — cleanest, but rarely implemented by apps.
+        2. PostMessage WM_LBUTTONDOWN → WM_MOUSEMOVE×N → WM_LBUTTONUP —
+           works for standard Win32/WPF apps that process WM_MOUSE messages.
+        3. Session-scoped SendInput — for GPU-accelerated apps (CapCut,
+           DaVinci Resolve, etc.) that read raw/direct input and ignore the
+           Win32 message queue.
+
+        Strategy 3 is safe: the server runs inside the isolated 'agent' RDP
+        session. SendInput there moves the agent's virtual cursor on the virtual
+        display only — the operator's real cursor on the console session is
+        completely unaffected.
+        """
+        win = HANDLES.get(window_handle)
+        if win is None:
+            return {"error": "stale_handle"}
+
+        hwnd = win.handle
+
+        # Tier 1: UIA DragPattern
+        try:
+            drag = win.iface_drag
+            drag.Start(start_x, start_y)
+            drag.Stop(end_x, end_y)
+            return {"ok": True, "method": "uia_drag"}
+        except Exception:
+            pass
+
+        # Tier 2: PostMessage WM_MOUSEMOVE sequence
+        try:
+            import win32api
+            import win32con
+            import win32gui
+
+            step_delay = (duration_ms / steps) / 1000.0
+            win32gui.PostMessage(
+                hwnd, win32con.WM_LBUTTONDOWN,
+                win32con.MK_LBUTTON, win32api.MAKELONG(start_x, start_y),
+            )
+            for i in range(1, steps + 1):
+                t = i / steps
+                mx = int(start_x + (end_x - start_x) * t)
+                my = int(start_y + (end_y - start_y) * t)
+                win32gui.PostMessage(
+                    hwnd, win32con.WM_MOUSEMOVE,
+                    win32con.MK_LBUTTON, win32api.MAKELONG(mx, my),
+                )
+                time.sleep(step_delay)
+            win32gui.PostMessage(
+                hwnd, win32con.WM_LBUTTONUP, 0, win32api.MAKELONG(end_x, end_y),
+            )
+            return {"ok": True, "method": "postmessage_sequence"}
+        except Exception:
+            pass
+
+        # Tier 3: Session-scoped SendInput (raw-input apps like CapCut)
+        try:
+            import win32gui
+            screen_start = win32gui.ClientToScreen(hwnd, (start_x, start_y))
+            screen_end = win32gui.ClientToScreen(hwnd, (end_x, end_y))
+            _sendinput_drag(screen_start, screen_end, duration_ms, steps)
+            return {"ok": True, "method": "sendinput_session"}
+        except Exception as exc:
+            return {"error": str(exc), "type": type(exc).__name__}
+
+    @mcp.tool()
+    def drag_screen(
+        start_x: int,
+        start_y: int,
+        end_x: int,
+        end_y: int,
+        duration_ms: int = 500,
+        steps: int = 20,
+    ) -> dict:
+        """Drag between absolute screen coordinates in the agent's virtual display.
+
+        Use this when OCR (find_text_in_hwnd / ocr_region) gives you screen
+        coordinates and you need to drag without a window handle.
+
+        All coordinates are screen-absolute within the agent session only —
+        they have no effect on the operator's console session.
+        """
+        try:
+            _sendinput_drag(
+                (start_x, start_y), (end_x, end_y), duration_ms, steps
+            )
+            return {
+                "ok": True,
+                "method": "sendinput_session",
+                "screen_start": [start_x, start_y],
+                "screen_end": [end_x, end_y],
+            }
         except Exception as exc:
             return {"error": str(exc), "type": type(exc).__name__}

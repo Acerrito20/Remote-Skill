@@ -91,7 +91,9 @@ skills/                 — MCP @tool() functions; each module has register(mcp)
   discovery.py          — list_windows, list_processes, connect_app, get_tree, find_element, inspect_element, find_by_path
   actions.py            — invoke, set_text, get_text, select_combo_item, toggle_checkbox, set_checkbox,
                           expand/collapse_tree_node, scroll_into_view, menu_select, background_click,
-                          background_type, send_raw_message
+                          background_type, send_raw_message,
+                          virtual_drag (window-relative drag, 3-tier fallback),
+                          drag_screen (screen-absolute drag, for use after OCR)
   lifecycle.py          — start_app, kill_app, restart_app, wait_for_app, get_app_state, list_app_windows
   waits.py              — wait_for, wait_for_idle, wait_for_window, poll_until
   dialogs.py            — dismiss_dialog, register_dialog_rule, list_modal_dialogs, screenshot_window;
@@ -155,6 +157,19 @@ drag_mouse_input  press_mouse_input  release_mouse_input  type_keys  set_focus
 - Click in client area → `PostMessage(WM_LBUTTONDOWN/UP, MAKELONG(x, y))`
 - Menu item → `win.menu_select("File", "Save As")` or `WM_COMMAND`
 - Checkbox → `elem.toggle()` / `elem.get_toggle_state()`
+- Drag gesture → `virtual_drag` / `drag_screen` (see session-isolation note below)
+
+### Session-isolation and virtual_drag
+
+`virtual_drag` and `drag_screen` use `SendInput` as a last-resort tier 3 fallback for GPU-accelerated
+apps (CapCut, DaVinci Resolve, etc.) that read raw/direct input and ignore the Win32 message queue.
+This is safe **because the MCP server runs inside the isolated `agent` RDP session**, not the user's
+console session. SendInput in the agent session moves only the agent's virtual cursor on the virtual
+display — the operator's real cursor is in a completely separate Windows session and is unaffected.
+
+Do NOT call `_sendinput_drag` from any process running in Session 0, LocalSystem, or the user's own
+interactive session. The NSSM service `ObjectName` must be `.\agent` (not `LocalSystem`) for this
+invariant to hold.
 
 ### Element handles vs COM pointers
 
