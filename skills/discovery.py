@@ -1,11 +1,13 @@
 """Discovery skills — find windows, processes, and elements.
 
 These are always called first in any automation flow.
+Engine selection for connect_app is driven by CFG.engine_for(path).
 """
 
 from __future__ import annotations
 
 from core.com_threading import com_thread
+from core.config import CFG
 from core.handle_cache import HANDLES
 from core.retry import with_retry
 
@@ -63,21 +65,40 @@ def register(mcp) -> None:
         title_re: str = "",
         pid: int = 0,
         path: str = "",
-        backend: str = "uia",
+        backend: str = "",
     ) -> dict:
         """Attach to a running app by title regex, PID, or executable path.
 
+        Engine and backend are resolved from config/app_overrides/ based on the
+        executable name. Pass backend explicitly to override the config value.
         Returns a window handle for use with other tools.
         """
         try:
+            override = CFG.override_for(path) if path else None
+            engine = override.engine if override else CFG.default_engine
+            effective_backend = backend or (override.backend if override else "uia")
+            timeout = CFG.timeouts.connect_seconds
+
+            if engine == "playwright":
+                # Electron app — return CDP connection info instead of a UIA handle.
+                cdp_url = CFG.cdp_url_for(path)
+                return {
+                    "engine": "playwright",
+                    "cdp_url": cdp_url,
+                    "note": (
+                        f"Use browser_open(cdp_url='{cdp_url}') for Electron apps. "
+                        "Start the app with --remote-debugging-port first."
+                    ),
+                }
+
             from pywinauto import Application
-            app = Application(backend=backend)
+            app = Application(backend=effective_backend)
             if pid:
-                app = app.connect(process=pid, timeout=5)
+                app = app.connect(process=pid, timeout=timeout)
             elif path:
-                app = app.connect(path=path, timeout=5)
+                app = app.connect(path=path, timeout=timeout)
             elif title_re:
-                app = app.connect(title_re=title_re, timeout=5)
+                app = app.connect(title_re=title_re, timeout=timeout)
             else:
                 return {"error": "Provide title_re, pid, or path"}
 
@@ -88,6 +109,8 @@ def register(mcp) -> None:
                 "title": win.window_text(),
                 "hwnd": win.handle,
                 "pid": win.process_id(),
+                "engine": engine,
+                "backend": effective_backend,
             }
         except Exception as exc:
             return {"error": str(exc), "type": type(exc).__name__}

@@ -27,10 +27,10 @@ uv venv
 uv pip install -e ".[dev]"
 
 # Run all unit tests (no Windows required)
-pytest tests/unit/
+pytest tests/unit/ -v
 
 # Run a single test file
-pytest tests/unit/test_handle_cache.py
+pytest tests/unit/test_config.py
 
 # Run integration tests (Windows only — skipped automatically on Linux/macOS)
 pytest tests/integration/
@@ -44,6 +44,9 @@ python server/main.py
 
 # Start with TCP/SSE transport (for cross-session use)
 CDG_TRANSPORT=tcp python server/main.py
+
+# Install pre-commit hooks (dev machines)
+pre-commit install
 ```
 
 ---
@@ -99,7 +102,9 @@ skills/                 — MCP @tool() functions; each module has register(mcp)
   safety.py             — assert_background_safe, get_audit_log, dry_run, get_guardrail_status, panic_stop
 
 core/
-  handle_cache.py       — HandleCache: opaque string handles → live COM wrappers; TTL 5 min
+  config.py             — CFG singleton: reads default.toml + app_overrides/*.toml; engine_for(), override_for(), cdp_url_for()
+  handle_cache.py       — HandleCache: opaque string handles → live COM wrappers; TTL from CFG; auto-purge daemon
+  middleware.py         — install_audit_middleware(): wraps every registered tool with timing + AUDIT.record()
   selector.py           — "Window[title~='Notepad'] > Edit[auto_id='15']" parser + pywinauto resolver
   retry.py              — @with_retry decorator with exponential backoff
   audit.py              — append-only JSON Lines audit log; AUDIT singleton
@@ -154,8 +159,12 @@ A stale handle returns `{"error": "stale_handle"}` — the agent must re-discove
 
 ### Engine selection is config, not code
 
-Adding support for a new app should be a one-line change in `config/app_overrides/<app>.toml`,
-not a code change. The `engine` key routes to the correct adapter.
+Adding support for a new app is a one-line change in `config/app_overrides/<app>.toml` —
+no code change needed. `CFG.engine_for(executable)` resolves the engine at runtime.
+`connect_app` and `start_app` both call `CFG.override_for()` automatically.
+
+For Electron apps (`engine = "playwright"`), `start_app` injects
+`--remote-debugging-port=<port>` automatically and returns the CDP URL to pass to `browser_open`.
 
 ### NSSM service must run as `agent` user — not LocalSystem
 
@@ -184,8 +193,8 @@ are the single biggest source of flaky automation.
 ## Adding a new engine
 
 1. Create `engines/<name>_adapter.py` with `connect()` / `launch()` functions.
-2. Add an entry to `config/app_overrides/<app>.toml`.
-3. Update the engine dispatch logic if needed (currently handled by skills loading the adapter directly).
+2. Add an entry to `config/app_overrides/<app>.toml` with `engine = "<name>"`.
+3. Handle the new engine name in `connect_app` / `start_app` if it needs special startup logic (e.g. the CDP port injection for playwright).
 
 ---
 
