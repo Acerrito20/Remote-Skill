@@ -71,6 +71,63 @@ boot.
 
 ---
 
+## Claude Code for VS Code
+
+The repo ships a `.mcp.json` at the root. Claude Code's VS Code extension
+picks it up automatically when you open the folder as a workspace — no manual
+configuration needed.
+
+### Cross-session setup (recommended)
+
+Your VS Code runs on the dev/console session; the agent runs in an isolated
+RDP session (or a separate Windows machine):
+
+1. On the **agent Windows machine**, start the server in TCP mode:
+
+   ```powershell
+   $env:CDG_TRANSPORT = "tcp"
+   $env:CDG_HOST      = "0.0.0.0"
+   python C:\cdg\server\main.py
+   ```
+
+2. Edit `.mcp.json` in this folder — replace `127.0.0.1` with the agent
+   machine's IP or hostname:
+
+   ```json
+   { "mcpServers": { "cdg-windows-agent": {
+       "type": "sse", "url": "http://AGENT_IP:8765/sse"
+   }}}
+   ```
+
+3. Reload the VS Code window (`Ctrl+Shift+P → Reload Window`). Claude Code
+   will connect and show **cdg-windows-agent** in the MCP servers list.
+
+### Same-machine setup
+
+If VS Code and the agent session run on the same Windows machine, use stdio
+instead. Replace the `.mcp.json` content with:
+
+```json
+{ "mcpServers": { "cdg-windows-agent": {
+    "command": "python",
+    "args": ["C:\\cdg\\server\\main.py"],
+    "env": { "CDG_TRANSPORT": "stdio" }
+}}}
+```
+
+### Debug configs
+
+`.vscode/launch.json` includes four ready-to-use launch configs:
+
+| Config | What it does |
+|---|---|
+| CDG Server — stdio | Start the server in stdio mode with the debugger attached |
+| CDG Server — TCP/SSE | Start in TCP mode, listening on all interfaces |
+| pytest — unit tests | Run the full unit test suite with `--tb=short` |
+| pytest — single file | Debug the currently open test file |
+
+---
+
 ## Claude Desktop integration
 
 Copy `scripts/client_configs/claude_desktop.json` into your Claude Desktop MCP

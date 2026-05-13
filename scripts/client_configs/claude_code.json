@@ -1,11 +1,41 @@
 {
-  "_comment": "Claude Code MCP config. Add via: claude mcp add cdg-windows-agent -- python C:\\cdg\\server\\main.py",
-  "mcpServers": {
-    "cdg-windows-agent": {
-      "command": "python",
-      "args": ["C:\\cdg\\server\\main.py"],
-      "env": {
-        "CDG_TRANSPORT": "stdio"
+  "_comment": [
+    "CDG Windows Agent — MCP config for Claude Code (CLI + VS Code extension).",
+    "",
+    "VS Code: copy .mcp.json at the repo root (already configured) — Claude Code",
+    "        picks it up automatically when the folder is opened as a workspace.",
+    "",
+    "CLI (one-time setup):",
+    "  Cross-session SSE:  claude mcp add cdg-windows-agent --transport sse http://AGENT_IP:8765/sse",
+    "  Same-machine stdio: claude mcp add cdg-windows-agent -- python C:\\cdg\\server\\main.py",
+    "",
+    "Environment variables (set on the agent Windows machine before starting the server):",
+    "  CDG_TRANSPORT   stdio | tcp          (default: stdio)",
+    "  CDG_HOST        bind address         (default: 127.0.0.1, use 0.0.0.0 for cross-session)",
+    "  CDG_PORT        SSE listen port      (default: 8765)",
+    "  CDG_AUDIT_LOG   path to audit.jsonl  (default: logs/audit.jsonl)"
+  ],
+
+  "stdio_mode": {
+    "_comment": "Use when VS Code and the agent session are on the same machine.",
+    "mcpServers": {
+      "cdg-windows-agent": {
+        "command": "python",
+        "args": ["C:\\cdg\\server\\main.py"],
+        "env": {
+          "CDG_TRANSPORT": "stdio",
+          "CDG_AUDIT_LOG": "C:\\cdg\\logs\\audit.jsonl"
+        }
+      }
+    }
+  },
+
+  "sse_mode": {
+    "_comment": "Use when VS Code is on a different machine (or different Windows session) from the agent. Replace AGENT_IP with the actual IP or hostname.",
+    "mcpServers": {
+      "cdg-windows-agent": {
+        "type": "sse",
+        "url": "http://AGENT_IP:8765/sse"
       }
     }
   }

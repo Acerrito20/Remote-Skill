@@ -1,0 +1,36 @@
+{
+  // Python environment
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
+  "python.terminal.activateEnvironment": true,
+
+  // Test runner — maps to pytest tests/unit/
+  "python.testing.pytestEnabled": true,
+  "python.testing.pytestArgs": ["tests/unit", "-v"],
+  "python.testing.unittestEnabled": false,
+
+  // Linting + formatting (ruff)
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.fixAll.ruff": "explicit",
+      "source.organizeImports.ruff": "explicit"
+    }
+  },
+
+  // Exclude generated/runtime dirs from explorer and search
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/*.pyc": true,
+    ".venv": true,
+    "logs": true
+  },
+  "search.exclude": {
+    "**/__pycache__": true,
+    ".venv": true,
+    "logs": true
+  },
+
+  // MCP server output goes to the Output panel; keep it visible
+  "claude.showMcpServerLogs": true
+}
