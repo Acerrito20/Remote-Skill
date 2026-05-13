@@ -19,6 +19,19 @@ stable monitor even with no physical display attached.
 
 ---
 
+## Requirements
+
+- Windows 10/11 for the agent session (dev tooling including unit tests runs on any OS)
+- Python 3.12+
+- [uv](https://github.com/astral-sh/uv) recommended over pip
+
+Optional, required only for specific engine fallbacks:
+- `tesseract` binary in PATH — for `tesseract` engine (OCR)
+- `WinAppDriver.exe` — for `winappdriver` engine
+- FlaUI DLLs in `engines/flaui_dlls/` — for `flaui` engine
+
+---
+
 ## Build and test commands
 
 ```bash
@@ -48,6 +61,32 @@ CDG_TRANSPORT=tcp python server/main.py
 # Install pre-commit hooks (dev machines)
 pre-commit install
 ```
+
+---
+
+## Windows host setup (run once, in order)
+
+```powershell
+.\scripts\setup_agent_user.ps1        # Create the 'agent' Windows user
+.\scripts\setup_openssh.ps1           # OpenSSH server with key auth
+.\scripts\enable_rdpwrap.ps1          # RDP Wrapper for concurrent sessions
+.\scripts\install_virtual_display.ps1 # Virtual monitor driver
+.\scripts\install_service.ps1         # NSSM service (run as agent user, NOT LocalSystem)
+.\scripts\disable_notifications.ps1   # Suppress toasts/focus-assist in agent session
+```
+
+After setup, SSH into the `agent` session and confirm `python --version` works.
+
+---
+
+## Claude Code / Claude Desktop integration
+
+Ready-made configs live in `scripts/client_configs/`:
+
+- `claude_code.json` — register via `claude mcp add cdg-windows-agent -- python C:\cdg\server\main.py`
+- `claude_desktop.json` — copy to `%APPDATA%\Claude\claude_desktop_config.json`
+
+Both use stdio transport. Adjust the `python` path if the repo is not at `C:\cdg`.
 
 ---
 
@@ -101,7 +140,7 @@ skills/                 — MCP @tool() functions; each module has register(mcp)
   sessions.py           — list_sessions, get_session_info, lock_session, attach_virtual_display
   browser.py            — browser_open, browser_navigate, browser_query, browser_click, browser_fill,
                           browser_eval_js, browser_screenshot (Playwright CDP bridge)
-  safety.py             — assert_background_safe, get_audit_log, dry_run, get_guardrail_status, panic_stop
+  safety.py             — assert_background_safe, get_audit_log, dry_run, get_guardrail_status, panic_stop, clear_stop
 
 core/
   config.py             — CFG singleton: reads default.toml + app_overrides/*.toml; engine_for(), override_for(), cdp_url_for()
@@ -110,7 +149,7 @@ core/
   selector.py           — "Window[title~='Notepad'] > Edit[auto_id='15']" parser + pywinauto resolver
   retry.py              — @with_retry decorator with exponential backoff
   audit.py              — append-only JSON Lines audit log; AUDIT singleton
-  com_threading.py      — @com_thread / @com_thread_async: CoInitialize per thread
+  com_threading.py      — @com_thread / @com_thread_async: CoInitialize per thread (graceful no-op on non-Windows)
   logging.py            — structlog JSON Lines to stderr
 
 engines/                — low-level adapters; skills/ picks the right one per app via config
@@ -136,6 +175,55 @@ scripts/
   install_service.ps1         — NSSM service install (must run as agent user, not LocalSystem)
   disable_notifications.ps1   — suppress toasts, focus-assist, game bar (run as agent user)
   client_configs/             — ready-to-use Claude Desktop + Claude Code MCP JSON configs
+```
+
+---
+
+## Tool reference (54 total)
+
+| Module | Tools |
+|---|---|
+| `discovery` | `list_windows`, `list_processes`, `connect_app`, `get_tree`, `find_element`, `inspect_element`, `find_by_path` |
+| `actions` | `invoke`, `set_text`, `get_text`, `select_combo_item`, `toggle_checkbox`, `set_checkbox`, `expand_tree_node`, `collapse_tree_node`, `scroll_into_view`, `menu_select`, `background_click`, `background_type`, `send_raw_message`, `virtual_drag`, `drag_screen` |
+| `lifecycle` | `start_app`, `kill_app`, `restart_app`, `wait_for_app`, `get_app_state`, `list_app_windows` |
+| `waits` | `wait_for`, `wait_for_idle`, `wait_for_window`, `poll_until` |
+| `dialogs` | `dismiss_dialog`, `register_dialog_rule`, `list_modal_dialogs`, `screenshot_window` |
+| `sessions` | `list_sessions`, `get_session_info`, `lock_session`, `attach_virtual_display` |
+| `browser` | `browser_open`, `browser_navigate`, `browser_query`, `browser_click`, `browser_fill`, `browser_eval_js`, `browser_screenshot` |
+| `safety` | `assert_background_safe`, `get_audit_log`, `dry_run`, `get_guardrail_status`, `panic_stop`, `clear_stop` |
+| `server/main.py` | `ping` (health check) |
+
+---
+
+## Configuration reference
+
+All defaults in `config/default.toml`. Per-app overrides in `config/app_overrides/<app>.toml`.
+
+Key defaults:
+
+| Setting | Default | Notes |
+|---|---|---|
+| `server.transport` | `stdio` | Override with `CDG_TRANSPORT=tcp` env var |
+| `timeouts.connect_seconds` | 5.0 | |
+| `timeouts.action_seconds` | 10.0 | |
+| `timeouts.wait_seconds` | 15.0 | |
+| `retry.max_attempts` | 3 | |
+| `retry.base_delay_seconds` | 0.1 | Exponential backoff |
+| `handle_cache.ttl_seconds` | 300 | 5-minute handle lifetime |
+| `audit.path` | `logs/audit.jsonl` | Append-only, never delete |
+| `engines.default` | `pywinauto` | |
+
+Per-app override example (`config/app_overrides/slack.toml`):
+```toml
+engine = "playwright"
+cdp_port = 9222
+```
+Engine options: `pywinauto` (default), `playwright`, `autohotkey`, `flaui`, `winappdriver`, `tesseract`.
+
+Built-in dialog rules (auto-dismiss without a tool call):
+```toml
+save_changes         = { title_re = ".*Save changes.*", action = "click_button", target = "Don't Save" }
+program_not_responding = { title_re = ".*not responding.*", action = "click_button", target = "Close the program" }
 ```
 
 ---
@@ -241,3 +329,75 @@ def notepad_pid():
 ```
 
 Always kill spawned processes in fixture teardown — even on test failure.
+
+---
+
+## Known limitations and real-world failure modes
+
+### Third-party API capability gates
+
+Some external APIs (e.g. Meta Graph API Lead Ads endpoint) require the calling app to hold
+specific approved capabilities. There is no token, Business Manager arrangement, or System User
+workaround that bypasses a capability gate — the check is server-side against the app ID.
+
+If automation against an API fails consistently with permission errors despite valid tokens,
+check whether the app has been reviewed and approved for that specific capability before
+spending time on token/credential variations. The fix is App Review submission, not automation.
+
+### Web UI auto-save reversion on error
+
+Some web apps (e.g. Meta Ads Manager) auto-save draft state and silently revert to an earlier
+checkpoint when a server-side error fires. Do not rely on auto-save for multi-step form flows.
+
+Instead, treat every completed section as an explicit save point:
+
+```python
+# After completing a form section, trigger save explicitly before advancing
+browser_click(save_draft_handle)
+# Detect and abort on error banners rather than continuing
+error_text = browser_query("[data-testid='error-banner']", property="textContent")
+if error_text:
+    screenshot_window(form_window_handle)  # record state for recovery
+    raise RuntimeError(f"Save failed: {error_text}")
+```
+
+### CDP automation against React SPAs
+
+Multi-step `browser_eval_js` flows against React single-page apps have several common failure modes:
+
+**Collapsed card hides earlier inputs** — always assert a card/section is expanded before
+reading or writing any input inside it. Do not assume the UI state from a previous step persists.
+
+```python
+# Check expansion state before interacting
+is_expanded = browser_eval_js(
+    "document.querySelector('[data-section-id=\"q1\"]').classList.contains('expanded')"
+)
+if not is_expanded:
+    browser_click(section_header_handle)  # expand first
+    wait_for_idle()
+```
+
+**Wrong field targeted by "find empty input"** — emptiness is not a unique selector in a
+form with many similar fields. Target inputs by position relative to a stable anchor
+(a question-number label, a `data-*` attribute, or a fieldset legend) rather than by
+value state.
+
+**Menus or dropdowns opening offscreen** — scroll the trigger element to the viewport
+center before clicking:
+
+```python
+browser_eval_js("document.querySelector('...').scrollIntoView({block: 'center'})")
+wait_for_idle()
+browser_click(dropdown_trigger_handle)
+```
+
+**Label overwrites from concurrent React renders** — after `browser_fill`, verify the
+field value was accepted before moving on. React controlled inputs can reset a value if
+an event fires between the fill and the re-render.
+
+```python
+browser_fill(input_handle, value)
+actual = browser_query("#my-input", property="value")
+assert actual == value, f"Fill not accepted: got {actual!r}"
+```
