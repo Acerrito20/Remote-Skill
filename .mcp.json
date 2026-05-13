@@ -1,0 +1,23 @@
+{
+  "_comment": [
+    "CDG Windows Agent — project-level MCP config for Claude Code (VS Code extension).",
+    "Claude Code picks this up automatically when you open this folder as a workspace.",
+    "",
+    "CROSS-SESSION USE (recommended): agent runs in a separate RDP session.",
+    "  1. On the agent Windows machine, start the server in TCP mode:",
+    "       CDG_TRANSPORT=tcp CDG_HOST=0.0.0.0 python server\\main.py",
+    "  2. Update 'url' below to http://<AGENT_IP>:8765/sse",
+    "  3. Reload the VS Code window — Claude Code will connect automatically.",
+    "",
+    "SAME-MACHINE USE: swap 'type'/'url' for the stdio block in the comment below.",
+    "  \"command\": \"python\",",
+    "  \"args\": [\"C:\\\\cdg\\\\server\\\\main.py\"],",
+    "  \"env\": { \"CDG_TRANSPORT\": \"stdio\" }"
+  ],
+  "mcpServers": {
+    "cdg-windows-agent": {
+      "type": "sse",
+      "url": "http://127.0.0.1:8765/sse"
+    }
+  }
+}

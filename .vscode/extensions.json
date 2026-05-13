@@ -1,0 +1,21 @@
+{
+  "recommendations": [
+    // Claude Code — the VS Code extension that uses .mcp.json in this folder
+    "anthropic.claude-code",
+
+    // Python tooling
+    "ms-python.python",
+    "ms-python.debugpy",
+    "charliermarsh.ruff",
+
+    // Remote development — SSH into the agent Windows machine from VS Code
+    "ms-vscode-remote.remote-ssh",
+    "ms-vscode-remote.remote-ssh-edit",
+
+    // TOML — for editing config/default.toml and app_overrides/*.toml
+    "tamasfe.even-better-toml",
+
+    // PowerShell — for editing scripts/*.ps1
+    "ms-vscode.powershell"
+  ]
+}
