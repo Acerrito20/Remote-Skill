@@ -50,7 +50,21 @@ def install_audit_middleware(mcp) -> None:
     """Wrap every tool already registered on `mcp` with audit + timing.
 
     Call this after all skill modules have called register(mcp), before mcp.run().
+
+    FastMCP stores tools in `._tools` (a dict of name → Tool). We access this
+    internal attribute because FastMCP has no public wrapping API. If it changes,
+    the server still starts cleanly — middleware is skipped with a warning rather
+    than crashing.
     """
-    for name, tool in list(mcp._tools.items()):
-        original_fn = tool.fn
+    tool_registry = getattr(mcp, "_tools", None)
+    if tool_registry is None:
+        log.warning(
+            "audit_middleware_skipped",
+            reason="mcp._tools not found — FastMCP API may have changed",
+        )
+        return
+    for name, tool in list(tool_registry.items()):
+        original_fn = getattr(tool, "fn", None)
+        if original_fn is None:
+            continue
         tool.fn = _wrap_tool(original_fn, name)

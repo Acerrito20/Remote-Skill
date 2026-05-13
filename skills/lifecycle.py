@@ -82,7 +82,7 @@ def register(mcp) -> None:
     ) -> dict:
         """Block until a window matching criteria appears or timeout expires."""
         try:
-            from pywinauto import Application, timings
+            from pywinauto import Application
             deadline = time.monotonic() + timeout
             while time.monotonic() < deadline:
                 try:

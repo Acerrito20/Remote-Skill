@@ -112,11 +112,14 @@ core/
   logging.py            — structlog JSON Lines to stderr
 
 engines/                — low-level adapters; skills/ picks the right one per app via config
-  pywinauto_adapter.py  — primary (UIA + Win32 backends)
-  win32_adapter.py      — raw user32/SendMessage/PostMessage
-  playwright_adapter.py — CDP connect for Electron apps
-  autohotkey_adapter.py — AHK v2 subprocess wrapper for legacy apps
-  flaui_adapter.py      — .NET bridge via pythonnet for WPF edge cases
+  pywinauto_adapter.py   — primary (UIA + Win32 backends)
+  win32_adapter.py       — raw user32/SendMessage/PostMessage
+  playwright_adapter.py  — CDP connect for Electron apps
+  autohotkey_adapter.py  — AHK v2 subprocess wrapper for legacy apps
+  flaui_adapter.py       — .NET bridge via pythonnet for WPF edge cases; DLLs in flaui_dlls/
+  winappdriver_adapter.py — WebDriver protocol (reuse existing Selenium infra)
+  tesseract_adapter.py   — OCR last resort: screenshot_region, ocr_hwnd, find_text_in_hwnd;
+                           uses PrintWindow (background-safe); requires Tesseract binary installed
 
 config/
   default.toml          — server, timeouts, retry, handle_cache, audit, engine, dialog_rules defaults
@@ -124,6 +127,8 @@ config/
 
 scripts/
   setup_agent_user.ps1        — create 'agent' Windows user
+  setup_openssh.ps1           — install OpenSSH server, key auth, PowerShell default shell
+  setup_winrm.ps1             — enable WinRM / PowerShell Remoting (backup channel)
   enable_rdpwrap.ps1          — install RDP Wrapper for concurrent sessions
   install_virtual_display.ps1 — virtual monitor driver (IddSampleDriver / usbmmidd / Parsec)
   install_service.ps1         — NSSM service install (must run as agent user, not LocalSystem)
