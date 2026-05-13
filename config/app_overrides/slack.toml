@@ -1,0 +1,8 @@
+# Slack — route to Playwright over CDP because Slack is an Electron app.
+# Start Slack with: slack.exe --remote-debugging-port=9222
+
+[app]
+executable = "slack.exe"
+engine = "playwright"
+cdp_port = 9222
+cdp_url = "http://localhost:9222"

@@ -1,0 +1,7 @@
+# Example legacy MFC/VB6 app — route to AutoHotkey because UIA returns nothing useful.
+
+[app]
+executable = "legacy-erp.exe"
+engine = "autohotkey"
+script_dir = "scripts/legacy-erp"
+backend = "win32"

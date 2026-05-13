@@ -1,0 +1,35 @@
+# CDG Windows Agent — default configuration
+# Per-app overrides live in config/app_overrides/<name>.toml
+
+[server]
+transport = "stdio"   # or "tcp"
+host = "127.0.0.1"
+port = 8765
+session_id = "agent-session"
+
+[timeouts]
+connect_seconds = 5.0
+action_seconds = 10.0
+wait_seconds = 15.0
+
+[retry]
+max_attempts = 3
+base_delay_seconds = 0.1
+
+[handle_cache]
+ttl_seconds = 300
+
+[audit]
+enabled = true
+path = "logs/audit.jsonl"
+
+# Engine selection defaults to "pywinauto".
+# Override per-app in app_overrides/.
+[engines]
+default = "pywinauto"
+
+[dialog_rules]
+# Auto-dismiss common Windows dialogs.
+# Format: rule_name = { title_re = "...", action = "click_button", target = "..." }
+save_changes = { title_re = ".*Save changes.*", class_name = "#32770", action = "click_button", target = "Don't Save" }
+program_not_responding = { title_re = ".*not responding.*", action = "click_button", target = "Close the program" }

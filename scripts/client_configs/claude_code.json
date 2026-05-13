@@ -1,0 +1,12 @@
+{
+  "_comment": "Claude Code MCP config. Add via: claude mcp add cdg-windows-agent -- python C:\\cdg\\server\\main.py",
+  "mcpServers": {
+    "cdg-windows-agent": {
+      "command": "python",
+      "args": ["C:\\cdg\\server\\main.py"],
+      "env": {
+        "CDG_TRANSPORT": "stdio"
+      }
+    }
+  }
+}

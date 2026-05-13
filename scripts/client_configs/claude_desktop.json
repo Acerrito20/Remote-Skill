@@ -1,0 +1,13 @@
+{
+  "_comment": "Claude Desktop MCP server config. Place at %APPDATA%\\Claude\\claude_desktop_config.json",
+  "mcpServers": {
+    "cdg-windows-agent": {
+      "command": "C:\\Python312\\python.exe",
+      "args": ["C:\\cdg\\server\\main.py"],
+      "env": {
+        "CDG_TRANSPORT": "stdio",
+        "CDG_AUDIT_LOG": "C:\\cdg\\logs\\audit.jsonl"
+      }
+    }
+  }
+}
